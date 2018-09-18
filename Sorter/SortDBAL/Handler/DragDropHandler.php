@@ -9,14 +9,11 @@
 namespace Shopware\SwagCustomSort\Sorter\SortDBAL\Handler;
 
 use Shopware\Bundle\SearchBundle\SortingInterface;
-use Shopware\Bundle\SearchBundle\StoreFrontCriteriaFactory;
 use Shopware\Bundle\SearchBundleDBAL\QueryBuilder;
-use Shopware\Bundle\SearchBundleDBAL\SortingHandler\PopularitySortingHandler;
-use Shopware\Bundle\SearchBundleDBAL\SortingHandler\PriceSortingHandler;
-use Shopware\Bundle\SearchBundleDBAL\SortingHandler\ProductNameSortingHandler;
-use Shopware\Bundle\SearchBundleDBAL\SortingHandler\ReleaseDateSortingHandler;
 use Shopware\Bundle\SearchBundleDBAL\SortingHandlerInterface;
 use Shopware\Bundle\StoreFrontBundle\Struct\ShopContextInterface;
+use Shopware\Components\Model\ModelManager;
+use Shopware\Models\Search\CustomSorting;
 use Shopware\SwagCustomSort\Components\Listing;
 use Shopware\SwagCustomSort\Components\Sorting;
 use Shopware\SwagCustomSort\Sorter\Sort\DragDropSorting;
@@ -32,11 +29,18 @@ class DragDropHandler implements SortingHandlerInterface
     private $sortingComponent;
 
     /**
-     * @param Sorting $sortingComponent
+     * @var ModelManager
      */
-    public function __construct(Sorting $sortingComponent)
+    private $modelManager;
+
+    /**
+     * @param Sorting      $sortingComponent
+     * @param ModelManager $modelManager
+     */
+    public function __construct(Sorting $sortingComponent, ModelManager $modelManager)
     {
         $this->sortingComponent = $sortingComponent;
+        $this->modelManager = $modelManager;
     }
 
     /**
@@ -65,21 +69,23 @@ class DragDropHandler implements SortingHandlerInterface
         }
 
         //apply 'plugin' order
-        if ($linkedCategoryId) {
-            $query->leftJoin(
-                'productCategory',
-                's_products_sort',
-                'customSort',
-                'customSort.productId = productCategory.articleID AND (customSort.categoryId = :sortCategoryId OR customSort.categoryId IS NULL)'
-            );
-            $query->setParameter('sortCategoryId', $linkedCategoryId);
-        } else {
-            $query->leftJoin(
-                'productCategory',
-                's_products_sort',
-                'customSort',
-                'customSort.productId = productCategory.articleID AND (customSort.categoryId = productCategory.categoryID OR customSort.categoryId IS NULL)'
-            );
+        if (($productCategoryAlias = $this->getProductCategoryAlias($query)) !== null) {
+            if ($linkedCategoryId) {
+                $query->leftJoin(
+                    $productCategoryAlias,
+                    's_products_sort',
+                    'customSort',
+                    'customSort.productId = ' . $productCategoryAlias . '.articleID AND (customSort.categoryId = :sortCategoryId OR customSort.categoryId IS NULL)'
+                );
+                $query->setParameter('sortCategoryId', $linkedCategoryId);
+            } else {
+                $query->leftJoin(
+                    $productCategoryAlias,
+                    's_products_sort',
+                    'customSort',
+                    'customSort.productId = ' . $productCategoryAlias . '.articleID AND (customSort.categoryId = ' . $productCategoryAlias . '.categoryID OR customSort.categoryId IS NULL)'
+                );
+            }
         }
 
         //exclude passed products ids from result
@@ -105,55 +111,77 @@ class DragDropHandler implements SortingHandlerInterface
      */
     private function getDefaultData($defaultSort)
     {
-        switch ($defaultSort) {
-            case StoreFrontCriteriaFactory::SORTING_RELEASE_DATE:
-                return [
-                    'handler' => new ReleaseDateSortingHandler(),
-                    'direction' => 'DESC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_POPULARITY:
-                return [
-                    'handler' => new PopularitySortingHandler(),
-                    'direction' => 'DESC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_CHEAPEST_PRICE:
-                return [
-                    'handler' => new PriceSortingHandler(Shopware()->Container()->get('shopware_searchdbal.search_price_helper_dbal')),
-                    'direction' => 'ASC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_HIGHEST_PRICE:
-                return [
-                    'handler' => new PriceSortingHandler(Shopware()->Container()->get('shopware_searchdbal.search_price_helper_dbal')),
-                    'direction' => 'DESC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_PRODUCT_NAME_ASC:
-                return [
-                    'handler' => new ProductNameSortingHandler(),
-                    'direction' => 'ASC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_PRODUCT_NAME_DESC:
-                return [
-                    'handler' => new ProductNameSortingHandler(),
-                    'direction' => 'DESC',
-                ];
-            case StoreFrontCriteriaFactory::SORTING_SEARCH_RANKING:
-                return [
-                    'handler' => new RatingSortingHandler(),
-                    'direction' => 'DESC',
-                ];
-            case self::SORTING_STOCK_ASC:
-                return [
-                    'handler' => new StockSortingHandler(),
-                    'direction' => 'ASC',
-                ];
-            case self::SORTING_STOCK_DESC:
-                return [
-                    'handler' => new StockSortingHandler(),
-                    'direction' => 'DESC',
-                ];
-
-            default:
-                throw new \RuntimeException('No matching sort found');
+        try {
+            /** @var CustomSorting $customSorting */
+            $customSorting = $this->modelManager->find(CustomSorting::class, $defaultSort);
+        } catch (\Exception $exception) {
+            throw new \RuntimeException('No matching sort found', 0, $exception);
         }
+
+        if (!$customSorting instanceof CustomSorting) {
+            throw new \RuntimeException('No matching sort found');
+        }
+
+        $sortings = json_decode($customSorting->getSortings(), true);
+
+        if (empty($sortings)) {
+            throw new \RuntimeException('No matching sort found');
+        }
+
+        $direction = reset($sortings)['direction'];
+        $sortingClass = key($sortings);
+        /** @var SortingInterface $sorting */
+        $sorting = new $sortingClass($direction);
+        $handler = $this->getSortingHandler($sorting);
+
+        return [
+            'handler' => $handler,
+            'direction' => $direction,
+        ];
+    }
+
+    /**
+     * @param SortingInterface $sorting
+     *
+     * @throws \RuntimeException
+     *
+     * @return SortingHandlerInterface
+     */
+    private function getSortingHandler(SortingInterface $sorting)
+    {
+        /** @var SortingHandlerInterface[] $sortingHandlers */
+        $sortingHandlers = Shopware()->Container()->get('shopware_searchdbal.sorting_handlers');
+
+        foreach ($sortingHandlers as $handler) {
+            if ($handler->supportsSorting($sorting)) {
+                return $handler;
+            }
+        }
+
+        throw new \RuntimeException(sprintf('Sorting %s not supported', get_class($sorting)));
+    }
+
+    /**
+     * @param QueryBuilder $query
+     *
+     * @return string|null
+     */
+    private function getProductCategoryAlias(QueryBuilder $query)
+    {
+        $joins = $query->getQueryPart('join');
+
+        if (!array_key_exists('product', $joins)) {
+            return null;
+        }
+
+        foreach ($joins['product'] as $join) {
+            if (strpos($join['joinAlias'], 'productCategory') !== 0) {
+                continue;
+            }
+
+            return $join['joinAlias'];
+        }
+
+        return null;
     }
 }

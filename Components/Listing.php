@@ -162,15 +162,17 @@ class Listing
      */
     public function getCategoryBaseSort($categoryId)
     {
+        $defaultListingSorting = Shopware()->Config()->get('defaultListingSorting');
+
         /* @var CategoryAttributes $categoryAttributes */
         $categoryAttributes = $this->categoryAttributesRepo->findOneBy(['categoryId' => $categoryId]);
         if (!$categoryAttributes instanceof CategoryAttributes) {
-            return false;
+            return $defaultListingSorting;
         }
 
         $baseSortId = $categoryAttributes->getSwagBaseSort();
         if ($baseSortId === null) {
-            return false;
+            return $defaultListingSorting;
         }
 
         return $baseSortId;

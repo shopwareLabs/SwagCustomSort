@@ -9,6 +9,7 @@
 namespace Shopware\SwagCustomSort\Subscriber;
 
 use Enlight\Event\SubscriberInterface;
+use Enlight_View_Default;
 use Shopware\SwagCustomSort\Components\Listing;
 use Shopware_Plugins_Frontend_SwagCustomSort_Bootstrap as PluginBootstrap;
 
@@ -57,6 +58,7 @@ class Frontend implements SubscriberInterface
         $categoryId = $view->getAssign('sCategoryContent')['id'];
         $showCustomSort = $categoryComponent->showCustomSortName($categoryId);
         $baseSort = $categoryComponent->getCategoryBaseSort($categoryId);
+        $this->addTemplateDir($view);
         if ($showCustomSort || $baseSort > 0) {
             /** @var Listing $categoryComponent */
             $categoryComponent = $this->bootstrap->get('swagcustomsort.listing_component');
@@ -75,16 +77,26 @@ class Frontend implements SubscriberInterface
     }
 
     /**
-     * @param \Enlight_View_Default $view
-     * @param string                $templatePath
+     * @param Enlight_View_Default $view
      */
-    protected function extendsTemplate($view, $templatePath)
+    protected function addTemplateDir(Enlight_View_Default $view)
     {
         $version = $this->bootstrap->get('shop')->getTemplate()->getVersion();
         if ($version >= 3) {
             $view->addTemplateDir($this->bootstrapPath . 'Views/responsive/');
         } else {
             $view->addTemplateDir($this->bootstrapPath . 'Views/emotion/');
+        }
+    }
+
+    /**
+     * @param Enlight_View_Default $view
+     * @param string                $templatePath
+     */
+    protected function extendsTemplate(Enlight_View_Default $view, $templatePath)
+    {
+        $version = $this->bootstrap->get('shop')->getTemplate()->getVersion();
+        if ($version < 3) {
             $view->extendsTemplate($templatePath);
         }
     }

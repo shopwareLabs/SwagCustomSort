@@ -131,6 +131,6 @@ class Sort implements SubscriberInterface
      */
     public function onCollectSortingHandlers()
     {
-        return new DragDropHandler($this->sortingComponent);
+        return new DragDropHandler($this->sortingComponent, $this->em);
     }
 }

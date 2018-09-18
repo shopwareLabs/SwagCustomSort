@@ -42,6 +42,14 @@ class Shopware_Controllers_Backend_CustomSort extends Shopware_Controllers_Backe
      */
     private $events;
 
+    public function preDispatch()
+    {
+        parent::preDispatch();
+
+        $categoryId = (int) $this->Request()->getParam('categoryId');
+        $this->generateCategoryAttribute($categoryId);
+    }
+
     /**
      * Get product list and images for current category
      */
@@ -260,6 +268,34 @@ class Shopware_Controllers_Backend_CustomSort extends Shopware_Controllers_Backe
         }
 
         $this->View()->assign(['success' => true]);
+    }
+
+    /**
+     * Generates an empty attribute for a category if none exists
+     *
+     * @param int $categoryId
+     */
+    private function generateCategoryAttribute($categoryId)
+    {
+        try {
+            /** @var Category $category */
+            $category = $this->getModelManager()->find(Category::class, $categoryId);
+        } catch (\Exception $exception) {
+            return;
+        }
+
+        if ($category === null || $category->getAttribute() !== null) {
+            return;
+        }
+
+        try {
+            $attribute = new \Shopware\Models\Attribute\Category();
+            $this->getModelManager()->persist($attribute);
+            $category->setAttribute($attribute);
+            $this->getModelManager()->flush($category);
+        } catch (\Exception $exception) {
+            return;
+        }
     }
 
     /**
